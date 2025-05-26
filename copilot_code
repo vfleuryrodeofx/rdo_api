@@ -1,0 +1,194 @@
+//package main
+
+//import (
+//"net/http"
+
+//"github.com/gin-gonic/gin"
+//swaggerfiles "github.com/swaggo/files"
+//ginSwagger "github.com/swaggo/gin-swagger" // gin-swagger middleware
+//)
+
+//// @title Swagger Example API
+//// @version 1.0
+//// @description This is a sample server Petstore server.
+//// @termsOfService http://swagger.io/terms/
+
+//// @contact.name API Support
+//// @contact.url http://www.swagger.io/support
+//// @contact.email support@swagger.io
+
+//// @license.name Apache 2.0
+//// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
+
+//// @host petstore.swagger.io:8080
+//// @BasePath /v2
+//func main() {
+//router := gin.Default()
+//router.GET("/", Home)
+
+//apiV1 := router.Group("/v1")
+
+//apiV1.POST("/v1/login")
+
+//router.Run(":8080")
+//}
+
+//func Home(c *gin.Context) {
+//c.String(http.StatusOK, "Hin hin hin you didn't say the magic word !")
+//}
+
+//func decodetoken
+
+// //
+package main
+
+import (
+	"database/sql"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
+	_ "github.com/mattn/go-sqlite3"
+)
+
+// User represents the user model
+type User struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// TokenDetails contains the JWT token information
+type TokenDetails struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	AccessUuid   string    `json:"access_uuid"`
+	RefreshUuid  string    `json:"refresh_uuid"`
+	AtExpires    time.Time `json:"at_expires"`
+	RtExpires    time.Time `json:"rt_expires"`
+}
+
+// Create the database and user table
+func initDB() *sql.DB {
+	db, err := sql.Open("sqlite3", "./auth.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create users table if it doesn't exist
+	createTableSQL := `CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		username TEXT UNIQUE NOT NULL,
+		password TEXT NOT NULL
+	);`
+
+	_, err = db.Exec(createTableSQL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return db
+}
+
+// JWT secret key - in production, use environment variables
+var jwtSecret = []byte("your-256-bit-secret")
+
+func main() {
+	r := gin.Default()
+	db := initDB()
+	defer db.Close()
+
+	// Login endpoint
+	r.POST("/login", func(c *gin.Context) {
+		var user User
+		if err := c.ShouldBindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+			return
+		}
+
+		// Check user credentials
+		var dbUser User
+		err := db.QueryRow("SELECT id, username, password FROM users WHERE username = ?",
+			user.Username).Scan(&dbUser.ID, &dbUser.Username, &dbUser.Password)
+
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+			return
+		}
+
+		if user.Password != dbUser.Password { // In production, use proper password hashing
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+			return
+		}
+
+		// Generate JWT Token
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"user_id":  dbUser.ID,
+			"username": dbUser.Username,
+			"exp":      time.Now().Add(time.Hour * 24).Unix(), // Token expires in 24 hours
+		})
+
+		tokenString, err := token.SignedString(jwtSecret)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not generate token"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"token": tokenString,
+		})
+	})
+
+	// Middleware to check for valid JWT token
+	authMiddleware := func() gin.HandlerFunc {
+		return func(c *gin.Context) {
+			authHeader := c.GetHeader("Authorization")
+			if authHeader == "" {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header is required"})
+				c.Abort()
+				return
+			}
+
+			// Remove 'Bearer ' prefix from token
+			tokenString := authHeader[7:]
+
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				return jwtSecret, nil
+			})
+
+			if err != nil || !token.Valid {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+				c.Abort()
+				return
+			}
+
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token claims"})
+				c.Abort()
+				return
+			}
+
+			c.Set("user_id", claims["user_id"])
+			c.Set("username", claims["username"])
+			c.Next()
+		}
+	}
+
+	// Protected route example
+	protected := r.Group("/api")
+	protected.Use(authMiddleware())
+	{
+		protected.GET("/profile", func(c *gin.Context) {
+			username := c.MustGet("username").(string)
+			c.JSON(http.StatusOK, gin.H{
+				"message":  "Welcome to your profile",
+				"username": username,
+			})
+		})
+	}
+
+	r.Run(":8080")
+}
