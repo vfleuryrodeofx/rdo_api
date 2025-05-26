@@ -52,12 +52,12 @@ func main() {
 	// AuthHandler init
 	authHandler := NewAuthHandler(dbConn)
 
-	router.POST("/login", authHandler.GetUserFromDB)
+	router.POST("/login", authHandler.GetAppFromDB)
 	router.Run(":8080")
 
 }
 
-func (h *AuthHandler) GetUserFromDB(c *gin.Context) {
+func (h *AuthHandler) GetAppFromDB(c *gin.Context) {
 	var app App
 	if err := c.ShouldBindJSON(&app); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request. App did not bind."})
@@ -81,5 +81,11 @@ func (h *AuthHandler) GetUserFromDB(c *gin.Context) {
 
 	// Generate Token
 	fmt.Println("Generating token ! blipbloop")
+	//Next step generate token
+	// store it in memory
+	// when query arises
+	// check if token is valid
+	// auth
+	c.JSON(http.StatusOK, gin.H{"token": "1234"})
 
 }
